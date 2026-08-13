@@ -1,4 +1,5 @@
-import sys
+import argparse
+from pathlib import Path
 from PIL import Image
 
 def process_image(input_path, output_path):
@@ -6,7 +7,7 @@ def process_image(input_path, output_path):
         img = Image.open(input_path).convert("RGBA")
     except Exception as e:
         print(f"Error opening image: {e}")
-        return
+        return False
 
     width, height = img.size
     
@@ -40,6 +41,15 @@ def process_image(input_path, output_path):
         
     img_cropped.save(output_path, "PNG")
     print(f"Successfully saved processed sprite to {output_path}")
+    return True
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="裁剪图片中间视图并移除白色背景。")
+    parser.add_argument("input", type=Path)
+    parser.add_argument("output", type=Path)
+    return parser.parse_args()
+
 
 if __name__ == '__main__':
-    process_image("raw_image.png", "monster_sprite.png")
+    args = parse_args()
+    raise SystemExit(0 if process_image(args.input, args.output) else 1)

@@ -1,6 +1,13 @@
-import uiautomation as auto
+try:
+    import uiautomation as auto
+except ImportError:
+    if __name__ == "__main__":
+        raise SystemExit("uiautomation is not installed; run: pip install -r requirements-dev.txt")
+    import pytest
+    pytest.skip("uiautomation is not installed", allow_module_level=True)
 
-def test():
+
+def inspect_first_item():
     auto.SetGlobalSearchTimeout(3.0)
     # Search for anything on the desktop
     desktop = auto.GetRootControl()
@@ -12,4 +19,4 @@ def test():
             break
 
 if __name__ == "__main__":
-    test()
+    inspect_first_item()

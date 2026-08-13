@@ -1,5 +1,12 @@
-import uiautomation as auto
 import sys
+
+try:
+    import uiautomation as auto
+except ImportError:
+    if __name__ == "__main__":
+        raise SystemExit("uiautomation is not installed; run: pip install -r requirements-dev.txt")
+    import pytest
+    pytest.skip("uiautomation is not installed", allow_module_level=True)
 
 def find_on_desktop():
     # Try finding the item on the desktop explicitly

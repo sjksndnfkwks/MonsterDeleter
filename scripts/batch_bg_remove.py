@@ -1,12 +1,12 @@
-import os
-import glob
+import argparse
+from pathlib import Path
 import numpy as np
 from PIL import Image
 
-SPRITE_DIR = r"E:\19-AI项目\删除文件助手"
 TOLERANCE = 25 # Tolerance for color distance
+DEFAULT_SPRITE_DIR = Path(__file__).resolve().parents[1] / "assets"
 
-def remove_background(img_path, out_path):
+def remove_background(img_path, out_path, tolerance=TOLERANCE):
     print(f"Processing {img_path} ...")
     img = Image.open(img_path).convert("RGBA")
     data = np.array(img)
@@ -20,7 +20,7 @@ def remove_background(img_path, out_path):
     dist = np.sqrt(np.sum(diff**2, axis=2))
     
     # Create mask where distance < TOLERANCE
-    mask = dist < TOLERANCE
+    mask = dist < tolerance
     
     # Set alpha to 0 for matching pixels
     data[mask, 3] = 0
@@ -30,13 +30,26 @@ def remove_background(img_path, out_path):
     processed_img.save(out_path, "PNG")
     print(f"Saved {out_path}")
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="批量移除 spritesheet 的纯色背景。")
+    parser.add_argument("sprite_dir", nargs="?", type=Path, default=DEFAULT_SPRITE_DIR)
+    parser.add_argument("--tolerance", type=float, default=TOLERANCE)
+    return parser.parse_args()
+
+
 def main():
-    files = glob.glob(os.path.join(SPRITE_DIR, "*_spritesheet.png"))
-    for f in files:
-        if f.endswith("_transparent.png"):
-            continue
-        out_path = f.replace(".png", "_transparent.png")
-        remove_background(f, out_path)
+    args = parse_args()
+    sprite_dir = args.sprite_dir.resolve()
+    if not sprite_dir.is_dir():
+        raise SystemExit(f"Sprite directory does not exist: {sprite_dir}")
+
+    files = sorted(sprite_dir.glob("*_spritesheet.png"))
+    if not files:
+        print(f"No source spritesheets found in {sprite_dir}")
+        return
+    for source_path in files:
+        out_path = source_path.with_name(f"{source_path.stem}_transparent.png")
+        remove_background(source_path, out_path, args.tolerance)
         
 if __name__ == "__main__":
     main()
