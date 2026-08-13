@@ -1,15 +1,12 @@
 import os
 import sys
 import winreg
+from app_utils import find_windowless_python
 
 def add_context_menu():
     try:
         # Get absolute paths
-        python_exe = sys.executable
-        if python_exe.lower().endswith("python.exe"):
-            pythonw_exe = python_exe[:-10] + "pythonw.exe"
-            if os.path.exists(pythonw_exe):
-                python_exe = pythonw_exe
+        python_exe = find_windowless_python(sys.executable)
                 
         script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "main.py")
         

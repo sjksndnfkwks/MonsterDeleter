@@ -1,10 +1,11 @@
 import sys
 import os
 import winreg
-from PyQt6.QtWidgets import QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout, QGraphicsDropShadowEffect
+from PyQt6.QtWidgets import QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout, QGraphicsDropShadowEffect, QMessageBox
 from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QPoint, QEasingCurve, pyqtSignal, QUrl, pyqtProperty
 from PyQt6.QtGui import QPixmap, QPainter, QColor, QTransform, QImage, QPainterPath, QCursor, QPen
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+from app_utils import find_windowless_python, validate_target
 
 def get_resource_path(relative_path):
     try:
@@ -20,9 +21,8 @@ ROWS = 3
 def register_context_menu():
     try:
         exe_path = sys.executable
-        if not exe_path.lower().endswith('.exe') or 'python' in exe_path.lower():
-            # If running from python script, use the old command
-            exe_path = sys.executable
+        if not getattr(sys, "frozen", False):
+            exe_path = find_windowless_python(exe_path)
             script_path = os.path.abspath(__file__)
             command_str = f'"{exe_path}" "{script_path}" "%1"'
             icon_str = "shell32.dll,32"
@@ -40,8 +40,10 @@ def register_context_menu():
         command_key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, command_key_path)
         winreg.SetValue(command_key, "", winreg.REG_SZ, command_str)
         winreg.CloseKey(command_key)
+        return True, None
     except Exception as e:
         print(f"Error registering menu: {e}")
+        return False, str(e)
 
 class SpriteAnimator(QLabel):
     animationFinished = pyqtSignal()
@@ -58,6 +60,14 @@ class SpriteAnimator(QLabel):
         self.is_playing = False
 
     def load_spritesheet(self, filepath, cols=COLS, rows=ROWS, target_height=250, frame_indices=None):
+        self.stop()
+        self.frames = []
+        self.current_frame = 0
+
+        if cols <= 0 or rows <= 0 or target_height <= 0:
+            print("Error: Invalid spritesheet dimensions")
+            return False
+
         transparent_path = filepath.replace(".png", "_transparent.png")
         if os.path.exists(transparent_path):
             filepath = transparent_path
@@ -70,13 +80,15 @@ class SpriteAnimator(QLabel):
         if image.isNull():
             print(f"Error: Failed to load image {filepath}")
             return False
+        if image.width() < cols or image.height() < rows:
+            print(f"Error: Spritesheet is too small for a {cols}x{rows} grid: {filepath}")
+            return False
             
         pixmap = QPixmap.fromImage(image)
         
         frame_w = pixmap.width() // cols
         frame_h = pixmap.height() // rows
         
-        self.frames = []
         for r in range(rows):
             for c in range(cols):
                 frame = pixmap.copy(c * frame_w, r * frame_h, frame_w, frame_h)
@@ -84,22 +96,26 @@ class SpriteAnimator(QLabel):
                 self.frames.append(frame)
                 
         if frame_indices is not None:
-            self.frames = [self.frames[i] for i in frame_indices if i < len(self.frames)]
+            self.frames = [self.frames[i] for i in frame_indices if 0 <= i < len(self.frames)]
                 
         if self.frames:
             self.resize(self.frames[0].size())
-        return True
+        return bool(self.frames)
 
     def set_flip(self, flip):
         self.flip_horizontal = flip
         self._update_frame()
 
     def play(self, fps=8, loop=True):
+        if not self.frames or fps <= 0:
+            self.stop()
+            return False
         self.loop = loop
         self.current_frame = 0
         self.is_playing = True
         self.timer.start(1000 // fps)
         self._update_frame()
+        return True
 
     def stop(self):
         self.timer.stop()
@@ -192,6 +208,7 @@ class BubbleWidget(QWidget):
 
 class ChoicesWidget(QWidget):
     choiceMade = pyqtSignal()
+    cancelled = pyqtSignal()
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint)
@@ -199,8 +216,8 @@ class ChoicesWidget(QWidget):
         layout = QHBoxLayout()
         layout.setSpacing(15)
         
-        self.btn1 = QPushButton("是的")
-        self.btn2 = QPushButton("嘤嘤嘤就是这个")
+        self.btn1 = QPushButton("确认移至回收站")
+        self.btn2 = QPushButton("取消")
         
         # Modern Sleek UI Design
         btn_style = """
@@ -240,31 +257,51 @@ class ChoicesWidget(QWidget):
         shadow2.setColor(QColor(0, 0, 0, 30))
         self.btn2.setGraphicsEffect(shadow2)
         
-        self.btn1.clicked.connect(self.on_click)
-        self.btn2.clicked.connect(self.on_click)
+        self.btn1.clicked.connect(self.on_confirm)
+        self.btn2.clicked.connect(self.on_cancel)
         
         layout.addWidget(self.btn1)
         layout.addWidget(self.btn2)
         self.setLayout(layout)
 
-    def on_click(self):
+    def on_confirm(self):
         self.hide()
         self.choiceMade.emit()
+
+    def on_cancel(self):
+        self.hide()
+        self.cancelled.emit()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self.on_cancel()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def closeEvent(self, event):
+        if self.isVisible():
+            self.cancelled.emit()
+        event.accept()
         
 
 class MonsterDeleter(QWidget):
     def __init__(self, target_file):
         super().__init__()
-        self.target_file = target_file
+        self.target_file = os.path.abspath(os.fspath(target_file))
         self.target_pos = None
         self._bg_opacity = 0.0
         self.monster_sequence_started = False
+        self.deletion_succeeded = False
+        self.deletion_error = None
+        self._closing = False
         
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         
-        screen = QApplication.primaryScreen().geometry()
-        self.setGeometry(screen)
+        screen = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
+        self.screen_geometry = screen.geometry()
+        self.setGeometry(self.screen_geometry)
         
         self.animator = SpriteAnimator(self)
         self.animator.hide()
@@ -272,8 +309,12 @@ class MonsterDeleter(QWidget):
         self.explosion_animator = SpriteAnimator(self)
         self.explosion_animator.hide()
         
-        self.bubble = BubbleWidget("喂，是这个吗？")
+        self.bubble = BubbleWidget(f"确认将此文件移至回收站吗？\n{self.target_file}")
+        self.bubble.lbl_text.setWordWrap(True)
+        self.bubble.lbl_text.setMaximumWidth(600)
+        self.bubble.lbl_text.setToolTip(self.target_file)
         self.choices = ChoicesWidget()
+        self.choices.cancelled.connect(self.cancel_operation)
         
         self.init_audio()
         
@@ -387,7 +428,19 @@ class MonsterDeleter(QWidget):
             font.setPointSize(30)
             font.setBold(True)
             painter.setFont(font)
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "请选择你要摧毁的文件")
+            target_name = os.path.basename(self.target_file)
+            prompt = f"点击希望爆炸出现的位置\n目标文件：{target_name}\n按 Esc 取消"
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, prompt)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self.cancel_operation()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def cancel_operation(self):
+        self.close()
 
     def mousePressEvent(self, event):
         if not self.monster_sequence_started and event.button() == Qt.MouseButton.LeftButton:
@@ -410,9 +463,9 @@ class MonsterDeleter(QWidget):
         # Start playing BGM here
         self.bgm_player.play()
         
-        self.animator.load_spritesheet(os.path.join(SPRITE_DIR, "走路动效_spritesheet.png"))
+        if not self.load_animation(self.animator, "走路动效_spritesheet.png"):
+            return
         
-        screen = QApplication.primaryScreen().geometry()
         start_x = -self.animator.width()
         start_y = self.target_pos.y() - self.animator.height() // 2 + 50 # Move pet down
         
@@ -440,7 +493,8 @@ class MonsterDeleter(QWidget):
         self.sfx_player.play()
         
         # Phase 2: Pointing (Play ONCE, frames 11-14 only)
-        self.animator.load_spritesheet(os.path.join(SPRITE_DIR, "指着文件_spritesheet.png"), frame_indices=[11, 12, 13, 14])
+        if not self.load_animation(self.animator, "指着文件_spritesheet.png", frame_indices=[11, 12, 13, 14]):
+            return
         
         try:
             self.animator.animationFinished.disconnect()
@@ -484,7 +538,8 @@ class MonsterDeleter(QWidget):
         except TypeError:
             pass
             
-        self.animator.load_spritesheet(os.path.join(SPRITE_DIR, "踹文件动效_spritesheet.png"))
+        if not self.load_animation(self.animator, "踹文件动效_spritesheet.png"):
+            return
         self.animator.animationFinished.connect(self.on_kick_finished)
         self.animator.frameChanged.connect(self.on_kick_frame)
         self.animator.play(fps=8, loop=False)
@@ -499,7 +554,8 @@ class MonsterDeleter(QWidget):
         self.exp_player.play()
         
         # Slightly larger explosion (150 instead of 100)
-        self.explosion_animator.load_spritesheet(os.path.join(SPRITE_DIR, "爆炸_spritesheet.png"), target_height=150)
+        if not self.load_animation(self.explosion_animator, "爆炸_spritesheet.png", target_height=150):
+            return
         
         # Center explosion slightly higher to cover the file icon properly
         exp_x = self.target_pos.x() - self.explosion_animator.width() // 2
@@ -516,16 +572,19 @@ class MonsterDeleter(QWidget):
         self.explosion_animator.play(fps=8, loop=False)
         
         # We can trigger the file deletion here to perfectly sync with explosion
-        self.delete_target_file()
+        self.deletion_succeeded, self.deletion_error = self.delete_target_file()
 
     def delete_target_file(self):
         try:
             from send2trash import send2trash
-            if os.path.exists(self.target_file):
-                send2trash(self.target_file)
-                print(f"Moved to trash: {self.target_file}")
+            if not os.path.isfile(self.target_file):
+                return False, f"目标文件已不存在：\n{self.target_file}"
+            send2trash(self.target_file)
+            print(f"Moved to trash: {self.target_file}")
+            return True, None
         except Exception as e:
             print(f"Error: {e}")
+            return False, f"无法将文件移至回收站：\n{self.target_file}\n\n{e}"
 
     def on_kick_finished(self):
         try:
@@ -534,10 +593,14 @@ class MonsterDeleter(QWidget):
         except TypeError:
             pass
             
+        if not self.deletion_succeeded:
+            self.show_error_and_close(self.deletion_error or "文件删除失败。")
+            return
         self.start_phase4_leo()
 
     def start_phase4_leo(self):
-        self.animator.load_spritesheet(os.path.join(SPRITE_DIR, "雷欧登场_spritesheet.png"))
+        if not self.load_animation(self.animator, "雷欧登场_spritesheet.png"):
+            return
         self.animator.animationFinished.connect(self.start_phase5_fly)
         self.animator.play(fps=8, loop=False)
 
@@ -547,15 +610,15 @@ class MonsterDeleter(QWidget):
         except TypeError:
             pass
             
-        self.animator.load_spritesheet(os.path.join(SPRITE_DIR, "出场飞行动效_spritesheet.png"))
+        if not self.load_animation(self.animator, "出场飞行动效_spritesheet.png"):
+            return
         self.animator.play(fps=8, loop=True)
         
-        screen = QApplication.primaryScreen().geometry()
         self.move_anim2 = QPropertyAnimation(self.animator, b"pos")
         self.move_anim2.setDuration(2000)
         self.move_anim2.setStartValue(self.animator.pos())
         
-        end_x = screen.width() + 200
+        end_x = self.width() + 200
         end_y = self.animator.pos().y()
             
         self.move_anim2.setEndValue(QPoint(end_x, end_y))
@@ -564,22 +627,57 @@ class MonsterDeleter(QWidget):
         self.move_anim2.start()
 
     def on_app_exit(self):
-        # Explicitly stop multimedia to free resources and stop background audio
+        self.close()
+
+    def load_animation(self, animator, filename, **kwargs):
+        path = os.path.join(SPRITE_DIR, filename)
+        if animator.load_spritesheet(path, **kwargs):
+            return True
+        self.show_error_and_close(f"动画资源无法加载：\n{path}")
+        return False
+
+    def show_error_and_close(self, message):
         self.bgm_player.stop()
         self.sfx_player.stop()
         self.exp_player.stop()
+        QMessageBox.critical(self, "大将怪兽", message)
         self.close()
+
+    def closeEvent(self, event):
+        if self._closing:
+            event.accept()
+            return
+        self._closing = True
+        self.animator.stop()
+        self.explosion_animator.stop()
+        self.bgm_player.stop()
+        self.sfx_player.stop()
+        self.exp_player.stop()
+        self.bubble.close()
+        self.choices.close()
+        event.accept()
         QApplication.quit()
-        sys.exit(0)
+
 
 if __name__ == '__main__':
-    register_context_menu()
-    
-    target = None
-    if len(sys.argv) >= 2:
-        target = sys.argv[1]
-        
     app = QApplication(sys.argv)
+    registered, registration_error = register_context_menu()
+
+    target, target_error = validate_target(sys.argv[1] if len(sys.argv) >= 2 else None)
+    if target is None:
+        if len(sys.argv) < 2 and registered:
+            QMessageBox.information(
+                None,
+                "大将怪兽",
+                "右键菜单注册成功。\n请在文件上点击右键并选择“召唤大将怪兽摧毁”。",
+            )
+            sys.exit(0)
+        message = target_error
+        if registration_error:
+            message += f"\n\n右键菜单注册失败：{registration_error}"
+        QMessageBox.critical(None, "大将怪兽", message)
+        sys.exit(1)
+
     ex = MonsterDeleter(target)
     ex.show()
     sys.exit(app.exec())

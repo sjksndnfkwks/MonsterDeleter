@@ -4,8 +4,10 @@ import os
 try:
     import uiautomation as auto
 except ImportError:
-    print("uiautomation not installed")
-    sys.exit(1)
+    if __name__ == "__main__":
+        raise SystemExit("uiautomation is not installed; run: pip install -r requirements-dev.txt")
+    import pytest
+    pytest.skip("uiautomation is not installed", allow_module_level=True)
 
 def find_file_pos(filepath):
     filename = os.path.basename(filepath)

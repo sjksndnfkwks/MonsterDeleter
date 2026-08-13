@@ -14,8 +14,8 @@
 
 如果你拿到了打包好的 `MonsterDeleter.exe`，只需要两步：
 
-1. **注册右键菜单**：双击运行一次 `MonsterDeleter.exe`，此时屏幕会变暗并出现狙击瞄准界面，同时系统后台已自动将右键选项写入注册表。按 `Esc` 或关闭程序即可。
-2. **享受摧毁**：在桌面上或任意文件夹中，右键点击你想删除的倒霉文件，选择 **“召唤大将怪兽摧毁”**。屏幕变暗后，使用红色准星点击该文件，欣赏怪兽的表演！
+1. **注册右键菜单**：双击运行一次 `MonsterDeleter.exe`，程序会注册“召唤大将怪兽摧毁”并显示成功提示。
+2. **享受摧毁**：在桌面上或任意文件夹中，右键点击你想删除的文件，选择 **“召唤大将怪兽摧毁”**。屏幕变暗后，使用红色准星选择爆炸出现的位置，再核对文件名并确认。任何时候都可以按 `Esc` 取消。
 
 > ⚠️ **注意**：程序实际使用了 `send2trash`（安全移至回收站）而不是彻底粉碎，所以如果你后悔了，还可以从回收站把文件捞回来。
 
@@ -29,6 +29,12 @@
 pip install -r requirements.txt
 ```
 
+如果需要运行测试、打包程序或使用 `scripts/` 中的图片处理工具，请安装开发依赖：
+
+```bash
+pip install -r requirements-dev.txt
+```
+
 ### 2. 本地运行测试
 
 ```bash
@@ -37,6 +43,23 @@ python main.py
 
 # 指定删除某个特定文件 (替换成你的文件路径)
 python main.py "C:\path\to\your\file.txt"
+```
+
+运行自动测试：
+
+```bash
+python -m pytest -q
+```
+
+`tests/` 中的 Windows UI 自动化脚本也可以单独运行；相关可选依赖缺失时，pytest 会跳过这些诊断脚本。
+
+图片处理脚本默认读取仓库的 `assets/`，也可以传入其他目录：
+
+```bash
+python scripts/batch_bg_remove.py "D:\path\to\sprites"
+python scripts/batch_rembg.py "D:\path\to\sprites"
+python scripts/batch_rembg_slice.py "D:\path\to\sprites"
+python scripts/process_image.py "D:\path\to\input.png" "D:\path\to\output.png"
 ```
 
 ### 3. 一键打包发布 (PyInstaller)

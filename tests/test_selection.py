@@ -1,6 +1,13 @@
 import sys
 import time
-import uiautomation as auto
+
+try:
+    import uiautomation as auto
+except ImportError:
+    if __name__ == "__main__":
+        raise SystemExit("uiautomation is not installed; run: pip install -r requirements-dev.txt")
+    import pytest
+    pytest.skip("uiautomation is not installed", allow_module_level=True)
 
 def find_selected_item():
     try:

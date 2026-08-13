@@ -1,10 +1,10 @@
-import os
-import glob
+import argparse
+from pathlib import Path
 from PIL import Image
 import rembg
 import io
 
-SPRITE_DIR = r"E:\19-AI项目\删除文件助手"
+DEFAULT_SPRITE_DIR = Path(__file__).resolve().parents[1] / "assets"
 COLS = 5
 ROWS = 3
 
@@ -48,16 +48,31 @@ def process_spritesheet(img_path, out_path):
                 
         out_img.save(out_path, "PNG")
         print(f"Saved {out_path}")
+        return True
     except Exception as e:
         print(f"Failed to process {img_path}: {e}")
+        return False
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="逐帧使用 rembg 处理 spritesheet。")
+    parser.add_argument("sprite_dir", nargs="?", type=Path, default=DEFAULT_SPRITE_DIR)
+    return parser.parse_args()
+
 
 def main():
-    files = glob.glob(os.path.join(SPRITE_DIR, "*_spritesheet.png"))
-    for f in files:
-        if f.endswith("_transparent.png"):
-            continue
-        out_path = f.replace(".png", "_transparent.png")
-        process_spritesheet(f, out_path)
+    sprite_dir = parse_args().sprite_dir.resolve()
+    if not sprite_dir.is_dir():
+        raise SystemExit(f"Sprite directory does not exist: {sprite_dir}")
+    files = sorted(sprite_dir.glob("*_spritesheet.png"))
+    if not files:
+        print(f"No source spritesheets found in {sprite_dir}")
+        return
+    failures = 0
+    for source_path in files:
+        out_path = source_path.with_name(f"{source_path.stem}_transparent.png")
+        failures += not process_spritesheet(source_path, out_path)
+    if failures:
+        raise SystemExit(f"Failed to process {failures} spritesheet(s).")
         
 if __name__ == "__main__":
     main()
